@@ -1,0 +1,159 @@
+﻿import requests
+import time
+import pandas as pd
+from datetime import datetime, timedelta, timezone
+
+# Конфигурация
+TELEGRAM_TOKEN = '7733713876:AAEeYXYrU9SUGc-ihOBMrKqTn6fAJMsG5GE'
+CHAT_ID = '552398882'
+
+SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'XRPUSDT', 'BNBUSDT', 'SOLUSDT', 'DOGEUSDT', 'ADAUSDT', 'HYPEUSDT', 'SUIUSDT', 'BCHUSDT', 'LINKUSDT', 'AVAXUSDT'] 
+INTERVAL = '60'  # 60 минут (1 час) для более точного расчета недельного VWAP
+REQUEST_DELAY = 1
+MOSCOW_TZ = timezone(timedelta(hours=3))  # Московское время UTC+3
+WEEK_START_DAY = 0  # 0 = понедельник, 6 = воскресенье (настройте по вашему стандарту)
+WEEK_START_HOUR = 3  # Начало недельной сессии в 03:00 по МСК
+
+previous_states = {}
+
+def get_bybit_klines(symbol, interval, limit=168):
+    """Получение данных с Bybit с учетом недельной сессии по МСК"""
+    now = datetime.now(MOSCOW_TZ)
+    
+    # Находим начало текущей недели (понедельник 03:00 МСК)
+    today = now.date()
+    start_of_week = today - timedelta(days=today.weekday())  # Понедельник текущей недели
+    week_start = datetime.combine(start_of_week, datetime.min.time(), tzinfo=MOSCOW_TZ) + timedelta(hours=WEEK_START_HOUR)
+    
+    # Если сейчас время до начала недельной сессии, берем данные с предыдущей недели
+    if now < week_start:
+        week_start = week_start - timedelta(weeks=1)
+    
+    # Для Bybit timestamp в миллисекундах
+    from_timestamp = int(week_start.timestamp() * 1000)
+    
+    endpoint = 'https://api.bybit.com/v5/market/kline'
+    params = {
+        'category': 'linear',
+        'symbol': symbol,
+        'interval': interval,
+        'start': from_timestamp,
+        'limit': limit
+    }
+    
+    try:
+        response = requests.get(endpoint, params=params)
+        response.raise_for_status()
+        data = response.json()
+        return data['result']['list'][::-1]  # Переворачиваем список
+    except Exception as e:
+        print(f"Ошибка запроса Bybit для {symbol}: {str(e)}")
+        return None
+
+def calculate_weekly_vwap(klines):
+    """Расчет недельного VWAP"""
+    if not klines or len(klines) < 1:
+        return None
+        
+    df = pd.DataFrame(klines, columns=[
+        'timestamp', 'open', 'high', 'low', 'close', 'volume',
+        'turnover'
+    ])
+    
+    df = df.astype({
+        'open': float,
+        'high': float,
+        'low': float,
+        'close': float,
+        'volume': float,
+        'turnover': float
+    })
+    
+    # Рассчитываем VWAP для всей недельной сессии
+    df['typical_price'] = (df['high'] + df['low'] + df['close']) / 3
+    cumulative_typical = (df['typical_price'] * df['volume']).sum()
+    cumulative_volume = df['volume'].sum()
+    
+    if cumulative_volume == 0:
+        return None
+        
+    return cumulative_typical / cumulative_volume
+
+def send_telegram_message(message):
+    """Отправка сообщения в Telegram"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    params = {
+        'chat_id': CHAT_ID,
+        'text': message,
+        'parse_mode': 'HTML'
+    }
+    try:
+        response = requests.post(url, params=params)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        print(f"Ошибка отправки в Telegram: {str(e)}")
+
+def check_weekly_vwap():
+    """Проверка пересечения с недельным VWAP"""
+    now = datetime.now(MOSCOW_TZ)
+    
+    # Находим начало текущей недели
+    today = now.date()
+    start_of_week = today - timedelta(days=today.weekday())
+    week_start = datetime.combine(start_of_week, datetime.min.time(), tzinfo=MOSCOW_TZ) + timedelta(hours=WEEK_START_HOUR)
+    
+    # Если сейчас время до начала недельной сессии, пропускаем проверку
+    if now < week_start:
+        print(f"Сейчас {now.strftime('%H:%M:%S')} МСК - до начала недельной сессии. Ожидаем...")
+        return
+    
+    for symbol in SYMBOLS:
+        try:
+            # Получаем данные за текущую недельную сессию (начиная с понедельника 03:00 МСК)
+            klines = get_bybit_klines(symbol, INTERVAL, 168)  # 168 часов в неделе
+            if not klines:
+                continue
+                
+            weekly_vwap = calculate_weekly_vwap(klines)
+            if weekly_vwap is None:
+                continue
+                
+            # Последняя цена
+            last_close = float(klines[-1][4])
+            
+            # Определяем текущее состояние
+            current_state = 'above' if last_close > weekly_vwap else 'below'
+            
+            # Проверяем изменение состояния
+            if symbol in previous_states:
+                if previous_states[symbol] != current_state:
+                    direction = "вверх" if current_state == 'above' else "вниз"
+                    message = (f"<b>🚀 Weekly VWAP Signal {direction}</b>\n"
+                              f"🪙 {symbol}\n"
+                              f"💰 Цена: {last_close:.4f}\n"
+                              f"📊 Недельный VWAP: {weekly_vwap:.4f}\n"
+                              f"📈 Пересечение {direction} VWAP\n"
+                              f"🕒 Время: {now.strftime('%H:%M:%S')}")
+                    
+                    send_telegram_message(message)
+            
+            previous_states[symbol] = current_state
+            
+            print(f"{now} - {symbol} - Цена: {last_close:.4f}, Недельный VWAP: {weekly_vwap:.4f}, Состояние: {current_state}")
+            
+            time.sleep(REQUEST_DELAY)
+            
+        except Exception as e:
+            print(f"Ошибка при обработке {symbol}: {str(e)}")
+            time.sleep(5)
+
+def main():
+    print(f"Запуск мониторинга недельного VWAP через Bybit API (Московское время UTC+3)...")
+    print(f"Текущее время: {datetime.now(MOSCOW_TZ)}")
+    while True:
+        check_weekly_vwap()
+        # Проверяем каждые 10 минут (можно настроить)
+        time.sleep(600)
+
+if __name__ == "__main__":
+    main()

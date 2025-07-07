@@ -1,0 +1,176 @@
+﻿import requests
+import pandas as pd
+import numpy as np
+import time
+import telegram
+from datetime import datetime
+import logging
+
+# Настройка логгирования
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Конфигурация
+TELEGRAM_BOT_TOKEN = '8009562056:AAGxuCUHAHpaPucST7Z6FulB1rDrHalQVA0'
+TELEGRAM_CHAT_ID = '552398882'
+
+# Инициализация Telegram бота
+telegram_bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
+
+# Список криптовалют для мониторинга (пример, можно заменить на актуальные пары)
+SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'XRPUSDT', 'BNBUSDT', 'SOLUSDT', 'DOGEUSDT', 'ADAUSDT', 'HYPEUSDT', 'SUIUSDT', 'BCHUSDT', 'LINKUSDT', 'XLMUSDT', 'AVAXUSDT', 'TONUSDT', 'HBARUSDT', 'LTCUSDT', 'DOTUSDT', 'XMRUSDT', 'UNIUSDT', 'AAVEUSDT', 'APTUSDT', 'ICPUSDT', 'NEARUSDT', 'ETCUSDT', 'ONDOUSDT', 'MNTUSDT', 'KASUSDT', 'VETUSDT', 'RENDERUSDT', 'ENAUSDT', 'ARBUSDT', 'FETUSDT', 'ATOMUSDT', 'ALGOUSDT', 'FILUSDT', 'SEIUSDT', 'WLDUSDT', 'QNTUSDT', 'JUPUSDT', 'TIAUSDT', 'VIRTUALUSDT', 'STXUSDT', 'OPUSDT', 'WIFUSDT', 'GRTUSDT', 'IMXUSDT', 'CRVUSDT', 'JTOUSDT', 'AEROUSDT', 'CAKEUSDT', 'ENSUSDT', 'THETAUSDT', 'JASMYUSDT', 'SANDUSDT', 'GALAUSDT', 'PENDLEUSDT', 'WALUSDT', 'XTZUSDT', 'PYTHUSDT', 'FLOWUSDT', 'MANAUSDT', 'RUNEUSDT', 'APEUSDT', 'KAVAUSDT', 'COMPUSDT', 'DEEPUSDT', 'MORPHOUSDT', 'MOVEUSDT', 'BRETTUSDT', 'HNTUSDT', 'AIOZUSDT', 'EGLDUSDT', 'STRKUSDT', 'DYDXUSDT', 'AXSUSDT', 'JSTUSDT', 'AXLUSDT', 'CHZUSDT', 'SUNUSDT', 'ZKUSDT', 'ATHUSDT', 'TWTUSDT', 'POPCATUSDT', 'CTCUSDT', 'BEAMUSDT', '1INCHUSDT', 'SAFEUSDT', 'KSMUSDT', 'RVNUSDT', 'MINAUSDT', 'PNUTUSDT', 'MOCAUSDT', 'ZILUSDT', 'OMUSDT', 'SNXUSDT', 'BERAUSDT', 'ZRXUSDT', 'NOTUSDT', 'YFIUSDT', 'BLURUSDT']  # Добавьте до 100 монет
+
+# Параметры MACD
+MACD_FAST = 12
+MACD_SLOW = 26
+MACD_SIGNAL = 9
+
+def calculate_macd(df, fast=MACD_FAST, slow=MACD_SLOW, signal=MACD_SIGNAL):
+    """Вычисление MACD индикатора"""
+    exp1 = df['close'].ewm(span=fast, adjust=False).mean()
+    exp2 = df['close'].ewm(span=slow, adjust=False).mean()
+    macd = exp1 - exp2
+    signal_line = macd.ewm(span=signal, adjust=False).mean()
+    histogram = macd - signal_line
+    return macd, signal_line, histogram
+
+def get_klines(symbol, interval, limit=100):
+    """Получение исторических данных с Bybit (публичный API)"""
+    try:
+        endpoint = "https://api.bybit.com/v5/market/kline"
+        
+        # Конвертация интервала в формат Bybit V5
+        interval_map = {
+            '4h': '240',
+            '1d': 'D'
+        }
+        interval_bybit = interval_map.get(interval, interval)
+        
+        params = {
+            'category': 'linear',
+            'symbol': symbol,
+            'interval': interval_bybit,
+            'limit': limit
+        }
+        
+        response = requests.get(endpoint, params=params)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data['retCode'] != 0:
+            logger.error(f"Error getting klines for {symbol}: {data['retMsg']}")
+            return None
+        
+        klines = data['result']['list']
+        df = pd.DataFrame(klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
+        
+        # Конвертация типов данных
+        df['timestamp'] = pd.to_datetime(df['timestamp'].astype('int64'), unit='ms')
+        df = df.astype({
+            'open': float,
+            'high': float,
+            'low': float,
+            'close': float,
+            'volume': float,
+            'turnover': float
+        })
+        
+        # Сортировка по времени (от старых к новым)
+        df = df.sort_values('timestamp').reset_index(drop=True)
+        
+        return df
+    
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request error for {symbol}: {str(e)}")
+        return None
+    except Exception as e:
+        logger.error(f"Exception in get_klines for {symbol}: {str(e)}")
+        return None
+
+def analyze_symbol(symbol):
+    """Анализ символа на разных таймфреймах"""
+    signals = []
+    
+    # Анализ на 4h таймфрейме
+    df_4h = get_klines(symbol, '4h')
+    if df_4h is not None and len(df_4h) > MACD_SLOW:
+        macd, signal, hist = calculate_macd(df_4h)
+        
+        # Проверка на пересечение MACD и сигнальной линии
+        last_hist = hist.iloc[-1]
+        prev_hist = hist.iloc[-2]
+        
+        if last_hist > 0 and prev_hist <= 0:
+            signals.append(('BUY', '4h', symbol, df_4h['close'].iloc[-1]))
+        elif last_hist < 0 and prev_hist >= 0:
+            signals.append(('SELL', '4h', symbol, df_4h['close'].iloc[-1]))
+    
+    # Анализ на 1d таймфрейме
+    df_1d = get_klines(symbol, '1d')
+    if df_1d is not None and len(df_1d) > MACD_SLOW:
+        macd, signal, hist = calculate_macd(df_1d)
+        
+        # Проверка направления гистограммы MACD
+        last_hist = hist.iloc[-1]
+        prev_hist = hist.iloc[-2]
+        
+        if last_hist > 0 and prev_hist <= 0:
+            signals.append(('BUY', '1d', symbol, df_1d['close'].iloc[-1]))
+        elif last_hist < 0 and prev_hist >= 0:
+            signals.append(('SELL', '1d', symbol, df_1d['close'].iloc[-1]))
+    
+    return signals
+
+def send_telegram_message(message):
+    """Отправка сообщения в Telegram через HTTP API"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            'chat_id': TELEGRAM_CHAT_ID,
+            'text': message,
+            'parse_mode': 'HTML'
+        }
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        logger.info(f"Message sent to Telegram: {message[:50]}...")
+    except Exception as e:
+        logger.error(f"Error sending Telegram message: {str(e)}")
+
+def main():
+    logger.info("Starting MACD signal scanner")
+    
+    while True:
+        try:
+            all_signals = []
+            
+            # Анализ всех символов
+            for symbol in SYMBOLS:
+                try:
+                    signals = analyze_symbol(symbol)
+                    if signals:
+                        all_signals.extend(signals)
+                    time.sleep(0.1)  # Ограничение запросов к API
+                except Exception as e:
+                    logger.error(f"Error analyzing {symbol}: {str(e)}")
+                    continue
+            
+            # Отправка сигналов
+            if all_signals:
+                message = "📈 MACD Signals:\n\n"
+                for signal in all_signals:
+                    action, timeframe, symbol, price = signal
+                    emoji = "🟢" if action == 'BUY' else "🔴"
+                    message += f"{emoji} {action} {symbol} 💰 {price:.4f} ({timeframe})\n"
+                
+                message += f"\n🕒 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                send_telegram_message(message)
+            
+            # Пауза перед следующим сканированием (10 минут)
+            time.sleep(600)
+            
+        except Exception as e:
+            logger.error(f"Main loop error: {str(e)}")
+            time.sleep(60)
+
+if __name__ == "__main__":
+    main()

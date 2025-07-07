@@ -1,0 +1,173 @@
+﻿import requests
+import time
+import pandas as pd
+import numpy as np
+from datetime import datetime
+
+
+# Конфигурация
+TELEGRAM_TOKEN = '8172012165:AAG59lc6AsNuH3zAaDfzMU9QCVVO67vf-Kg'
+CHAT_ID = '552398882'
+
+SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT',
+    'ADAUSDT', 'SUIUSDT', 'BCHUSDT', 'LINKUSDT', 'XLMUSDT', 'AVAXUSDT']
+INTERVAL = '720'  # 12-часовой таймфрейм 
+ATR_PERIOD = 6
+ATR_MULTIPLIER = 3.7
+REQUEST_DELAY = 1
+
+previous_states = {}
+
+def get_bybit_klines(symbol, interval, limit=100):
+    endpoint = 'https://api.bybit.com/v5/market/kline'
+    params = {'category': 'linear', 'symbol': symbol, 'interval': interval, 'limit': limit}
+    try:
+        response = requests.get(endpoint, params=params)
+        response.raise_for_status()
+        data = response.json()
+        if data.get('retCode') != 0 or not data.get('result', {}).get('list'):
+            print(f"Нет данных для {symbol}")
+            return None
+        return data['result']['list'][::-1]
+    except Exception as e:
+        print(f"Ошибка запроса Bybit для {symbol}: {str(e)}")
+        return None
+
+def calculate_supertrend(df):
+    try:
+        df = df.copy()
+
+        df['hl2'] = (df['high'] + df['low']) / 2
+        df['prev_close'] = df['close'].shift(1)
+
+        df['tr1'] = df['high'] - df['low']
+        df['tr2'] = abs(df['high'] - df['prev_close'])
+        df['tr3'] = abs(df['low'] - df['prev_close'])
+
+        df['tr'] = df[['tr1', 'tr2', 'tr3']].max(axis=1)
+        df['atr'] = df['tr'].rolling(ATR_PERIOD).mean().fillna(0)
+
+        df['up'] = df['hl2'] - (ATR_MULTIPLIER * df['atr'])
+        df['dn'] = df['hl2'] + (ATR_MULTIPLIER * df['atr'])
+        df['direction'] = 1
+
+        for i in range(1, len(df)):
+            if df.loc[i-1, 'close'] > df.loc[i-1, 'up']:
+                df.loc[i, 'up'] = max(df.loc[i, 'up'], df.loc[i-1, 'up'])
+            if df.loc[i-1, 'close'] < df.loc[i-1, 'dn']:
+                df.loc[i, 'dn'] = min(df.loc[i, 'dn'], df.loc[i-1, 'dn'])
+
+            prev_dir = df.loc[i-1, 'direction']
+            if prev_dir == -1 and df.loc[i, 'close'] > df.loc[i-1, 'dn']:
+                df.loc[i, 'direction'] = 1
+            elif prev_dir == 1 and df.loc[i, 'close'] < df.loc[i-1, 'up']:
+                df.loc[i, 'direction'] = -1
+            else:
+                df.loc[i, 'direction'] = prev_dir
+
+        print(f"Последние 3 значения ATR: {df['atr'].tail(3).values}")
+        print(f"Последние 3 направления: {df['direction'].tail(3).values}")
+
+        return df['direction'].iloc[-1], df['direction'].iloc[-2]
+    except Exception as e:
+        print(f"Ошибка расчета SuperTrend: {str(e)}")
+        return None, None
+
+def send_telegram_message(message):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    params = {'chat_id': CHAT_ID, 'text': message, 'parse_mode': 'HTML'}
+    try:
+        response = requests.post(url, params=params)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        print(f"Ошибка отправки в Telegram: {str(e)}")
+
+def check_supertrend_signals():
+    print(f"\n{datetime.now()} Запуск мониторинга SuperTrend 12H...")
+
+    for symbol in SYMBOLS:
+        try:
+            print(f"\nОбработка {symbol}...")
+            klines = get_bybit_klines(symbol, INTERVAL, ATR_PERIOD + 50)
+            if not klines:
+                print(f"Пропуск {symbol} - нет данных")
+                continue
+
+            df = pd.DataFrame(klines, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'turnover'])
+
+            for col in ['open', 'high', 'low', 'close']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            df.dropna(inplace=True)
+
+            if len(df) < ATR_PERIOD + 2:
+                print(f"Пропуск {symbol} - недостаточно данных ({len(df)} баров)")
+                continue
+
+            current_dir, prev_dir = calculate_supertrend(df)
+            if current_dir is None or prev_dir is None:
+                print(f"Пропуск {symbol} - ошибка расчета")
+                continue
+
+            last_close = df['close'].iloc[-1]
+
+            direction_text = '🟢 ВОСХОД' if current_dir == 1 else '🔴 НИСХОД' if current_dir == -1 else '??'
+            print(f"Текущее направление: {direction_text}")
+
+            if symbol in previous_states and previous_states[symbol] != current_dir:
+                message = ""
+                if current_dir == 1:
+                    message = (f"<b>🟢 BUY Signal SuperTrend 12H</b>\n"
+                               f"🪙 {symbol}\n"
+                               f"💰 Цена: {last_close:.4f}\n"
+                               f"📈 Тренд сменился на ВОСХОДЯЩИЙ")
+                elif current_dir == -1:
+                    message = (f"<b>🔴 SELL Signal (SuperTrend 12H)</b>\n"
+                               f"🪙 {symbol}\n"
+                               f"💰 Цена: {last_close:.4f}\n"
+                               f"📉 Тренд сменился на НИСХОДЯЩИЙ")
+				
+                if message:
+                    send_telegram_message(message)
+
+            previous_states[symbol] = current_dir
+
+            trend_symbol = '🟢' if current_dir == 1 else '🔴' if current_dir == -1 else '??'
+            print(f"{datetime.now()} {symbol} Цена: {last_close:.4f} Тренд: {trend_symbol}")
+
+            time.sleep(REQUEST_DELAY)
+
+        except Exception as e:
+            print(f"Ошибка при обработке {symbol}: {str(e)}")
+            time.sleep(5)
+
+def main():
+    print("=" * 50)
+    print("SuperTrend 12H Monitor")
+    print(f"Настройки: ATR({ATR_PERIOD}), Multiplier({ATR_MULTIPLIER})")
+    print(f"Мониторинг пар: {', '.join(SYMBOLS[:5])}...")
+    print("=" * 50)
+
+    while True:
+        try:
+            check_supertrend_signals()
+            print("\nОжидание следующего цикла проверки (30 минут)...")
+            time.sleep(1800)
+        except KeyboardInterrupt:
+            print("\nЗавершение работы скрипта...")
+            break
+        except Exception as e:
+            print(f"Критическая ошибка: {str(e)}")
+            time.sleep(60)
+
+if __name__ == "__main__":
+    print("Проверка версий:")
+    print(f"Pandas: {pd.__version__}")
+    print(f"Numpy: {np.__version__}")
+
+    # print("Пробная отправка сообщения в Telegram...")
+    # send_telegram_message("✅ Тестовое сообщение: соединение с ботом работает!")
+    # print("Пробное сообщение отправлено, продолжаем выполнение...\n")
+
+    main()
+
+

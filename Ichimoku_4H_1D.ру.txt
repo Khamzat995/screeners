@@ -1,0 +1,180 @@
+﻿import requests
+import time
+import pandas as pd
+from datetime import datetime
+
+# Конфигурация
+TELEGRAM_TOKEN = '7551198990:AAEk31xaKdMrr_Nh3umSYVro5lHW-yHDu2Q'
+CHAT_ID = '552398882'
+
+SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'XRPUSDT', 'BNBUSDT', 'SOLUSDT', 'DOGEUSDT', 'ADAUSDT', 'HYPEUSDT', 'SUIUSDT', 'BCHUSDT', 'LINKUSDT',  'AVAXUSDT'] 
+INTERVALS = {'240': '4H', 'D': '1D'}  # Таймфреймы (только 4H и 1D)
+REQUEST_DELAY = 1  # Задержка между запросами
+
+# Параметры Ichimoku
+conversion_periods = 9
+base_periods = 26
+lagging_span2_periods = 52
+displacement = 26
+
+previous_signals = {}
+
+def get_bybit_klines(symbol, interval, limit=200):
+    """Получение данных с Bybit с улучшенной обработкой ошибок"""
+    endpoint = 'https://api.bybit.com/v5/market/kline'
+    params = {
+        'category': 'linear',
+        'symbol': symbol,
+        'interval': interval,
+        'limit': limit
+    }
+    
+    try:
+        response = requests.get(endpoint, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        if data.get('retCode') != 0:
+            print(f"API Error for {symbol} {interval}: {data.get('retMsg')}")
+            return None
+        return data['result']['list'][::-1]  # Переворачиваем список
+    except Exception as e:
+        print(f"Ошибка запроса для {symbol} {interval}: {str(e)}")
+        return None
+
+def calculate_indicators(klines):
+    """Расчет индикаторов Ichimoku"""
+    if not klines or len(klines) < lagging_span2_periods + displacement:
+        return None
+        
+    try:
+        df = pd.DataFrame(klines, columns=[
+            'timestamp', 'open', 'high', 'low', 'close', 'volume', 'turnover'
+        ]).astype({
+            'open': float, 'high': float, 'low': float, 
+            'close': float, 'volume': float, 'turnover': float
+        })
+        
+        def rolling_avg(series, period):
+            return (series.rolling(period).max() + series.rolling(period).min()) / 2
+            
+        tenkan = rolling_avg(df['high'], conversion_periods)
+        kijun = rolling_avg(df['high'], base_periods)
+        senkou_a = ((tenkan + kijun) / 2).shift(displacement)
+        senkou_b = rolling_avg(df['high'], lagging_span2_periods).shift(displacement)
+        
+        return {
+            'close': df['close'].iloc[-1],
+            'tenkan': tenkan.iloc[-1],
+            'kijun': kijun.iloc[-1],
+            'senkou_a': senkou_a.iloc[-1],
+            'senkou_b': senkou_b.iloc[-1],
+            'prev_tenkan': tenkan.iloc[-2] if len(tenkan) > 1 else None,
+            'prev_kijun': kijun.iloc[-2] if len(kijun) > 1 else None
+        }
+        
+    except Exception as e:
+        print(f"Ошибка расчета индикаторов: {str(e)}")
+        return None
+
+def check_cross(current, prev, ref_current, ref_prev):
+    """Проверка пересечения линии с референсом"""
+    if prev is None or ref_prev is None:
+        return False
+    return (current > ref_current and prev <= ref_prev) or (current < ref_current and prev >= ref_prev)
+
+def check_signals():
+    """Проверка торговых сигналов"""
+    for symbol in SYMBOLS:
+        try:
+            signals = {}
+            
+            for interval, tf_name in INTERVALS.items():
+                if klines := get_bybit_klines(symbol, interval):
+                    if indicators := calculate_indicators(klines):
+                        signals[tf_name] = indicators
+                    time.sleep(REQUEST_DELAY)
+            
+            if len(signals) != 2:
+                continue
+                
+            long_cond = (
+                check_cross(signals['4H']['tenkan'], signals['4H']['prev_tenkan'],
+                            signals['4H']['kijun'], signals['4H']['prev_kijun']) and
+                signals['4H']['tenkan'] > signals['4H']['kijun'] and
+                all(signals[tf]['close'] > signals[tf]['senkou_a'] and 
+                    signals[tf]['close'] > signals[tf]['senkou_b'] 
+                    for tf in ['4H', '1D'])
+            )
+            
+            short_cond = (
+                check_cross(signals['4H']['tenkan'], signals['4H']['prev_tenkan'],
+                            signals['4H']['kijun'], signals['4H']['prev_kijun']) and
+                signals['4H']['tenkan'] < signals['4H']['kijun'] and
+                all(signals[tf]['close'] < signals[tf]['senkou_a'] and 
+                    signals[tf]['close'] < signals[tf]['senkou_b'] 
+                    for tf in ['4H', '1D'])
+            )
+            
+            if long_cond or short_cond:
+                signal_type = 'BUY' if long_cond else 'SELL'
+                signal_key = f"{symbol}_{signal_type}_{datetime.now().strftime('%Y%m%d%H')}"
+                
+                if signal_key not in previous_signals:
+                    send_signal(symbol, signal_type, signals)
+                    previous_signals[signal_key] = True
+                    
+        except Exception as e:
+            print(f"Ошибка обработки {symbol}: {str(e)}")
+            time.sleep(5)
+
+def send_signal(symbol, signal_type, signals):
+    """Формирование и отправка сигнала"""
+    try:
+        emoji = '🟢' if signal_type == 'BUY' else '🔴'
+        message = [
+            f"{emoji} <b>{signal_type} SIGNAL</b>",
+            f"🪙 <b>{symbol}</b>",
+            f"📊 <b>Strategy:</b> Ichimoku Cloud"
+        ]
+        
+        for tf in INTERVALS.values():
+            msg = [
+                f"\n<b>{tf} timeframe:</b>",
+                f"💰 Цена: {signals[tf]['close']:.4f}",
+                f"🔵 Tenkan: {signals[tf]['tenkan']:.4f}",
+                f"🔴 Kijun: {signals[tf]['kijun']:.4f}",
+                f"🟢 Senkou A: {signals[tf]['senkou_a']:.4f}",
+                f"🟠 Senkou B: {signals[tf]['senkou_b']:.4f}"
+            ]
+            message.extend(msg)
+            
+        send_telegram_message("\n".join(message))
+        
+    except Exception as e:
+        print(f"Ошибка формирования сигнала: {str(e)}")
+
+def send_telegram_message(message):
+    """Безопасная отправка в Telegram"""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        response = requests.post(url, json={
+            'chat_id': CHAT_ID,
+            'text': message,
+            'parse_mode': 'HTML'
+        }, timeout=10)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"Ошибка отправки в Telegram: {str(e)}")
+
+def main():
+    print("Запуск мониторинга Ichimoku Cloud Strategy...")
+    while True:
+        start_time = time.time()
+        check_signals()
+        elapsed = time.time() - start_time
+        sleep_time = max(1800 - elapsed, 60)
+        print(f"Следующая проверка через {sleep_time/60:.1f} минут")
+        time.sleep(sleep_time)
+
+if __name__ == "__main__":
+    main()
