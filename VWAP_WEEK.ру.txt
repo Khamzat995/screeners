@@ -152,8 +152,8 @@ def main():
     print(f"Текущее время: {datetime.now(MOSCOW_TZ)}")
     while True:
         check_weekly_vwap()
-        # Проверяем каждые 10 минут (можно настроить)
-        time.sleep(600)
+        # Проверяем каждые 2 часа (можно настроить)
+        time.sleep(7200)
 
 if __name__ == "__main__":
     main()

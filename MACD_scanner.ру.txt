@@ -18,7 +18,7 @@ TELEGRAM_CHAT_ID = '552398882'
 telegram_bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
 
 # Список криптовалют для мониторинга (пример, можно заменить на актуальные пары)
-SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'XRPUSDT', 'BNBUSDT', 'SOLUSDT', 'DOGEUSDT', 'ADAUSDT', 'HYPEUSDT', 'SUIUSDT', 'BCHUSDT', 'LINKUSDT', 'XLMUSDT', 'AVAXUSDT', 'TONUSDT', 'HBARUSDT', 'LTCUSDT', 'DOTUSDT', 'XMRUSDT', 'UNIUSDT', 'AAVEUSDT', 'APTUSDT', 'ICPUSDT', 'NEARUSDT', 'ETCUSDT', 'ONDOUSDT', 'MNTUSDT', 'KASUSDT', 'VETUSDT', 'RENDERUSDT', 'ENAUSDT', 'ARBUSDT', 'FETUSDT', 'ATOMUSDT', 'ALGOUSDT', 'FILUSDT', 'SEIUSDT', 'WLDUSDT', 'QNTUSDT', 'JUPUSDT', 'TIAUSDT', 'VIRTUALUSDT', 'STXUSDT', 'OPUSDT', 'WIFUSDT', 'GRTUSDT', 'IMXUSDT', 'CRVUSDT', 'JTOUSDT', 'AEROUSDT', 'CAKEUSDT', 'ENSUSDT', 'THETAUSDT', 'JASMYUSDT', 'SANDUSDT', 'GALAUSDT', 'PENDLEUSDT', 'WALUSDT', 'XTZUSDT', 'PYTHUSDT', 'FLOWUSDT', 'MANAUSDT', 'RUNEUSDT', 'APEUSDT', 'KAVAUSDT', 'COMPUSDT', 'DEEPUSDT', 'MORPHOUSDT', 'MOVEUSDT', 'BRETTUSDT', 'HNTUSDT', 'AIOZUSDT', 'EGLDUSDT', 'STRKUSDT', 'DYDXUSDT', 'AXSUSDT', 'JSTUSDT', 'AXLUSDT', 'CHZUSDT', 'SUNUSDT', 'ZKUSDT', 'ATHUSDT', 'TWTUSDT', 'POPCATUSDT', 'CTCUSDT', 'BEAMUSDT', '1INCHUSDT', 'SAFEUSDT', 'KSMUSDT', 'RVNUSDT', 'MINAUSDT', 'PNUTUSDT', 'MOCAUSDT', 'ZILUSDT', 'OMUSDT', 'SNXUSDT', 'BERAUSDT', 'ZRXUSDT', 'NOTUSDT', 'YFIUSDT', 'BLURUSDT']  # Добавьте до 100 монет
+SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'XRPUSDT', 'BNBUSDT', 'SOLUSDT', 'DOGEUSDT', 'ADAUSDT', 'HYPEUSDT', 'SUIUSDT', 'BCHUSDT', 'LINKUSDT', 'AVAXUSDT']  # Добавьте до 100 монет
 
 # Параметры MACD
 MACD_FAST = 12
@@ -165,8 +165,8 @@ def main():
                 message += f"\n🕒 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                 send_telegram_message(message)
             
-            # Пауза перед следующим сканированием (10 минут)
-            time.sleep(600)
+            # Пауза перед следующим сканированием (через 2 часа)
+            time.sleep(7200)
             
         except Exception as e:
             logger.error(f"Main loop error: {str(e)}")

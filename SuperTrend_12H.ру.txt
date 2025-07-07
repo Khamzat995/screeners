@@ -150,8 +150,8 @@ def main():
     while True:
         try:
             check_supertrend_signals()
-            print("\nОжидание следующего цикла проверки (30 минут)...")
-            time.sleep(1800)
+            print("\nОжидание следующего цикла проверки (2 часа)...")
+            time.sleep(7200)
         except KeyboardInterrupt:
             print("\nЗавершение работы скрипта...")
             break
