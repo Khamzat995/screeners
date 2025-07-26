@@ -64,23 +64,20 @@ def calculate_indicators(klines):
         
         return {
             'close': df['close'].iloc[-1],
-            'tenkan': tenkan.iloc[-1],
-            'kijun': kijun.iloc[-1],
-            'senkou_a': senkou_a.iloc[-1],
+            'prev_close': df['close'].iloc[-2] if len(df['close']) > 1 else None,
             'senkou_b': senkou_b.iloc[-1],
-            'prev_tenkan': tenkan.iloc[-2] if len(tenkan) > 1 else None,
-            'prev_kijun': kijun.iloc[-2] if len(kijun) > 1 else None
+            'prev_senkou_b': senkou_b.iloc[-2] if len(senkou_b) > 1 else None
         }
         
     except Exception as e:
         print(f"Ошибка расчета индикаторов: {str(e)}")
         return None
 
-def check_cross(current, prev, ref_current, ref_prev):
-    """Проверка пересечения линии с референсом"""
-    if prev is None or ref_prev is None:
+def check_cross(current_price, prev_price, current_senkou_b, prev_senkou_b):
+    """Проверка пересечения цены с Senkou B"""
+    if prev_price is None or prev_senkou_b is None:
         return False
-    return (current > ref_current and prev <= ref_prev) or (current < ref_current and prev >= ref_prev)
+    return (current_price > current_senkou_b and prev_price <= prev_senkou_b) or (current_price < current_senkou_b and prev_price >= prev_senkou_b)
 
 def check_signals():
     """Проверка торговых сигналов"""
@@ -97,23 +94,15 @@ def check_signals():
             if len(signals) != 2:
                 continue
                 
-            long_cond = (
-                check_cross(signals['4H']['tenkan'], signals['4H']['prev_tenkan'],
-                            signals['4H']['kijun'], signals['4H']['prev_kijun']) and
-                signals['4H']['tenkan'] > signals['4H']['kijun'] and
-                all(signals[tf]['close'] > signals[tf]['senkou_a'] and 
-                    signals[tf]['close'] > signals[tf]['senkou_b'] 
-                    for tf in ['4H', '1D'])
-            )
+            long_cond = check_cross(
+                signals['4H']['close'], signals['4H']['prev_close'],
+                signals['4H']['senkou_b'], signals['4H']['prev_senkou_b']
+            ) and signals['4H']['close'] > signals['4H']['senkou_b']
             
-            short_cond = (
-                check_cross(signals['4H']['tenkan'], signals['4H']['prev_tenkan'],
-                            signals['4H']['kijun'], signals['4H']['prev_kijun']) and
-                signals['4H']['tenkan'] < signals['4H']['kijun'] and
-                all(signals[tf]['close'] < signals[tf]['senkou_a'] and 
-                    signals[tf]['close'] < signals[tf]['senkou_b'] 
-                    for tf in ['4H', '1D'])
-            )
+            short_cond = check_cross(
+                signals['4H']['close'], signals['4H']['prev_close'],
+                signals['4H']['senkou_b'], signals['4H']['prev_senkou_b']
+            ) and signals['4H']['close'] < signals['4H']['senkou_b']
             
             if long_cond or short_cond:
                 signal_type = 'BUY' if long_cond else 'SELL'
@@ -134,16 +123,13 @@ def send_signal(symbol, signal_type, signals):
         message = [
             f"{emoji} <b>{signal_type} SIGNAL</b>",
             f"🪙 <b>{symbol}</b>",
-            f"📊 <b>Strategy:</b> Ichimoku Cloud"
+            f"📊 <b>Strategy:</b> Price crossing Senkou B"
         ]
         
         for tf in INTERVALS.values():
             msg = [
                 f"\n<b>{tf} timeframe:</b>",
                 f"💰 Цена: {signals[tf]['close']:.4f}",
-                f"🔵 Tenkan: {signals[tf]['tenkan']:.4f}",
-                f"🔴 Kijun: {signals[tf]['kijun']:.4f}",
-                f"🟢 Senkou A: {signals[tf]['senkou_a']:.4f}",
                 f"🟠 Senkou B: {signals[tf]['senkou_b']:.4f}"
             ]
             message.extend(msg)
@@ -167,7 +153,7 @@ def send_telegram_message(message):
         print(f"Ошибка отправки в Telegram: {str(e)}")
 
 def main():
-    print("Запуск мониторинга Ichimoku Cloud Strategy...")
+    print("Запуск мониторинга Price crossing Senkou B Strategy...")
     while True:
         start_time = time.time()
         check_signals()
