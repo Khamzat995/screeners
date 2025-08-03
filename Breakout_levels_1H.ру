@@ -1,0 +1,163 @@
+﻿import requests
+import time
+import datetime
+from enum import Enum
+
+# === НАСТРОЙКИ ===
+TELEGRAM_TOKEN = "7971906867:AAHUricvISDfoSdtAe9gNKg8o21LB3Z0E1o"
+CHAT_ID = "552398882"
+CHECK_INTERVAL = 1800  # проверка каждую 30 минуту
+
+# === ТИПЫ ОПОВЕЩЕНИЙ ===
+class AlertType(Enum):
+    CROSS = "Пересечение"
+    CROSS_UP = "Пересечение снизу вверх"
+    CROSS_DOWN = "Пересечение сверху вниз"
+    GREATER = "Больше, чем"
+    LESS = "Меньше, чем"
+
+# === КЛАСС ОПОВЕЩЕНИЯ ===
+class Alert:
+    def __init__(self, symbol, timeframe, alert_type, value):
+        self.symbol = symbol
+        self.timeframe = timeframe
+        self.type = alert_type
+        self.value = value
+        self.triggered = False
+        self.last_price = None
+        
+    def check_condition(self, current_price):
+        prev_price = self.last_price
+        self.last_price = current_price
+        
+        if self.type == AlertType.CROSS:
+            if (prev_price is not None and 
+                ((prev_price < self.value and current_price >= self.value) or
+                 (prev_price > self.value and current_price <= self.value))):
+                return True
+                
+        elif self.type == AlertType.CROSS_UP:
+            if prev_price is not None and prev_price < self.value and current_price >= self.value:
+                return True
+                
+        elif self.type == AlertType.CROSS_DOWN:
+            if prev_price is not None and prev_price > self.value and current_price <= self.value:
+                return True
+                
+        elif self.type == AlertType.GREATER:
+            if current_price > self.value:
+                return True
+                
+        elif self.type == AlertType.LESS:
+            if current_price < self.value:
+                return True
+                
+        return False
+
+# === TELEGRAM ===
+def send_telegram_message(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": text}
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"Ошибка отправки Telegram: {e}")
+
+# === ФУНКЦИЯ ПОЛУЧЕНИЯ ЦЕНЫ ===
+def get_last_closed(symbol, timeframe):
+    url = "https://api.bybit.com/v5/market/kline"
+    params = {
+        "category": "linear",
+        "symbol": symbol,
+        "interval": timeframe,
+        "limit": 2
+    }
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        closed = float(data["result"]["list"][1][4])  # цена закрытия
+        timestamp = int(data["result"]["list"][1][0])  # время закрытия
+        return closed, timestamp
+    except Exception as e:
+        print(f"Ошибка получения данных для {symbol}: {e}")
+        return None, None
+
+# === ОСНОВНОЙ ЦИКЛ ===
+def main():
+    # Пример настройки оповещений
+    alerts = [
+        Alert("BTCUSDT", "60", AlertType.CROSS, 120000.0), # Пересечение
+	Alert("BTCUSDT", "60", AlertType.CROSS, 116120.0), # Пересечение
+	Alert("BTCUSDT", "60", AlertType.CROSS, 111870.0), # Пересечение
+	Alert("ETHUSDT", "60", AlertType.CROSS, 3900.0), # Пересечение
+	Alert("ETHUSDT", "60", AlertType.CROSS, 3500.0), # Пересечение
+	Alert("ETHUSDT", "60", AlertType.CROSS, 3340.0), # Пересечение
+	Alert("SUIUSDT", "60", AlertType.CROSS, 3.99), # Пересечение
+	Alert("SUIUSDT", "60", AlertType.CROSS, 3.62), # Пересечение
+	Alert("SUIUSDT", "60", AlertType.CROSS, 3.37), # Пересечение
+	Alert("BNBUSDT", "60", AlertType.CROSS, 800.0), # Пересечение
+	Alert("BNBUSDT", "60", AlertType.CROSS, 777.0), # Пересечение
+	Alert("BNBUSDT", "60", AlertType.CROSS, 726.0), # Пересечение
+	Alert("XRPUSDT", "60", AlertType.CROSS, 3.25), # Пересечение
+	Alert("XRPUSDT", "60", AlertType.CROSS, 3.0), # Пересечение
+	Alert("XRPUSDT", "60", AlertType.CROSS, 2.79), # Пересечение
+	Alert("SOLUSDT", "60", AlertType.CROSS, 180.0), # Пересечение
+	Alert("SOLUSDT", "60", AlertType.CROSS, 164.0), # Пересечение
+	Alert("SOLUSDT", "60", AlertType.CROSS, 150.0), # Пересечение
+	Alert("DOGEUSDT", "60", AlertType.CROSS, 0.23), # Пересечение
+	Alert("DOGEUSDT", "60", AlertType.CROSS, 0.215), # Пересечение
+	Alert("DOGEUSDT", "60", AlertType.CROSS, 0.174), # Пересечение
+	Alert("ADAUSDT", "60", AlertType.CROSS, 0.8), # Пересечение
+	Alert("ADAUSDT", "60", AlertType.CROSS, 0.68), # Пересечение
+	Alert("ADAUSDT", "60", AlertType.CROSS, 0.611), # Пересечение
+	Alert("HYPEUSDT", "60", AlertType.CROSS, 40.32), # Пересечение
+	Alert("HYPEUSDT", "60", AlertType.CROSS, 34.4), # Пересечение
+	Alert("HYPEUSDT", "60", AlertType.CROSS, 29.6), # Пересечение
+	Alert("BCHUSDT", "60", AlertType.CROSS, 564.0), # Пересечение
+	Alert("BCHUSDT", "60", AlertType.CROSS, 523.0), # Пересечение
+	Alert("BCHUSDT", "60", AlertType.CROSS, 382.0), # Пересечение
+       	# Alert("ETHUSDT", "15", AlertType.CROSS_DOWN, 3400.45), # Пересечение сверху вниз
+	# Alert("ETHUSDT", "15", AlertType.CROSS_UP, 3415.45), # Пересечение снизу вверх
+        # Alert("SUIUSDT", "15", AlertType.CROSS, 3.5), # Пересечение
+	# Alert("BTCUSDT", "15", AlertType.GREATER, 50000), # Цена стала БОЛЬШЕ 50000	
+        # Alert("ETHUSDT", "60", AlertType.LESS, 3400), # Цена стала МЕНЬШЕ 50000
+        # Alert("SOLUSDT", "240", AlertType.GREATER, 158.5),  # Превышение верхней границы 50000
+        # Alert("SOLUSDT", "240", AlertType.LESS, 157.5),      # Падение ниже нижней границы 50000
+	Alert("BTCUSDT", "60", AlertType.CROSS, 130000.0) # Пересечение
+    ]
+    
+    while True:
+        try:
+            for alert in alerts:
+                close_price, candle_time = get_last_closed(alert.symbol, alert.timeframe)
+                if close_price is None:
+                    continue
+                    
+                print(f"[{datetime.datetime.now()}] {alert.symbol}({alert.timeframe}m): close={close_price}")
+                
+                if alert.check_condition(close_price) and not alert.triggered:
+                    direction = "ВВЕРХ" if alert.type == AlertType.CROSS_UP else "ВНИЗ" if alert.type == AlertType.CROSS_DOWN else ""
+                    message = (f"🚀 [{alert.timeframe}m] {alert.symbol} {alert.type.value} "
+                             f"{alert.value} {direction} Close: {close_price}")
+                    send_telegram_message(message)
+                    alert.triggered = True
+                
+                # Сброс триггера если цена отошла от уровня
+                elif alert.triggered:
+                    threshold = 0.005 * alert.value  # 0.5% от уровня
+                    if abs(close_price - alert.value) > threshold:
+                        alert.triggered = False
+            
+            time.sleep(CHECK_INTERVAL)
+            
+        except KeyboardInterrupt:
+            print("Скрипт остановлен пользователем")
+            break
+        except Exception as e:
+            print(f"Ошибка в основном цикле: {e}")
+            time.sleep(60)
+
+if __name__ == "__main__":
+    main()
