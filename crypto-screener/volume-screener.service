@@ -1,0 +1,21 @@
+
+# Save as: /etc/systemd/system/volume-screener.service
+[Unit]
+Description=Crypto Volume Spike Screener (Binance Futures -> Telegram)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/crypto-screener
+ExecStart=/usr/bin/python3 /opt/crypto-screener/volume_screener.py
+Restart=always
+RestartSec=10
+Environment=TELEGRAM_BOT_TOKEN=YOUR_BOT_TOKEN
+Environment=TELEGRAM_CHAT_ID=YOUR_CHAT_ID
+
+# Optional: run as a non-root user
+#User=ubuntu
+#Group=ubuntu
+
+[Install]
+WantedBy=multi-user.target
